@@ -1,0 +1,163 @@
+<h1>Forward Erasure Correction</h1>
+<h3>Introduction</h3>
+This code implements Forward Erasure Correction. This means that it will not
+locate errors that occured during transmission, but it will regenerate any
+packets the have been lost along the way.
+
+<p>It consists of an encoder and a decoder. The encoder is fed a stream of data
+which it breaks up into packets. These packets can then be sent over an
+unreliable transport mechanism, typically UDP. The decoder can then
+reconstruct lost packets from redundant packets sent by the encoder.
+
+<p>Like other implementations, the encoder groups n packets of payload
+together and then adds k redundant packets to it. The receiver can only start
+to reconstruct any of the lost payload once it has received at least n packets
+in total.
+
+<p>I wanted everything to be as clean as possible, with no fancy features.
+Since it's open source, anyone is free to improve things as they see fit.
+Contributions should start with the to do list at the end of this document.
+
+<p>My intention was that it can be used in those cases where there is no back
+channel e.g. one-way satellite link. So, if the library has been properly
+configured, all data will be recovered, 
+even if many megabytes is lost due to external events like thunder storms.
+
+<h3>Parameters</h3>
+This implementation uses band matrices (instead of Van Der Monde matrices)
+for improved performance. It is extremely versatile, because it allows you to
+set the following parameters :
+<ol>
+<li><b>s</b> the size of each packet, excluding headers. (See 5 below).
+<li><b>n</b> the number of packets that are grouped together. This determines
+   latency i.e. the receiver may end up having to wait until the whole group
+   was received before it has enough data to output the first packet.
+   Unless you have latency or memory concerns, you may as
+   well set n to the number of packets you are sending.
+   (See 3 below)
+<li><b>k</b> the number of redundant packets sent for each group.
+   k / (n + k) should preferrably be much higher than the the error rate of
+   the transport mechanism on a per packet basis. Note that the k redundant
+   packets are accessed very frequently, so it is advisible that k * s should
+   be less than the amount of physical memory (RAM). Also note that as n gets
+   smaller the chance to loose k of them increases (especially if there are
+   burst losses), so n should be as large as possible. Usually the k * s
+   will equal to the maximum expected amount of data that could be lost.
+   <p>Maybe someone will write a function that uses probability models to
+   work out the smallest suitable value of k...
+<li><b>w</b> the width of the band in the band matrix. The larger w, the
+   more processing power is needed. Typically 40 is a good default. In the
+   unfortunate case that you loose a packet and all 40 redundant packets in
+   its column, the reconstruction will fail. Fortunely
+   these 41 packets are pseudo randomly distributed amoung the k + n packets
+   so the chance of that happening is not great.
+<li><b>g</b> The size of the Galois field is 2<sup>g</sup>. The
+   computing time increases linearly with g
+   (unlike other O(1) implementations).
+   Because a field has only 1 element which does not have
+   a multiplication inverse, the probability of not being able to find a
+   spil element when we have k - i rows left to choose from is
+   2<sup>-g * (k - i)</sup>. So a good value of g is 2, 3 or 4.
+   s must be a multiple of g * 4.
+<li><b>b</b> the number of bits per second that the encoder should limit the
+   output to. This prevents network overload. Setting this to 0, implies that
+   it should send as fast as possible.
+</ol>
+
+<h3>Functions</h3>
+<pre>
+fecEncoder *NewFecEncoder (void *userData,
+  size_t (*userSend)(void *buf, size_t size, size_t count, void *userData),
+  char **errorMessage,
+  int s, int n, int k, int w, int g, int b);
+</pre>
+If it returns NULL, an error has occured. If you passed a non-NULL value in
+errorMessage, *errorMessage will point to a string describing to you what
+went wrong.
+<pre>
+void FecEncode (fecPayload *buf, fecEncoder *f);
+</pre>
+FecEncode must be called n times (or a multiple thereof), otherwise the
+redundant data will not be sent.
+<pre>
+void DeleteFecEncoder (fecEncoder *f);
+
+typedef struct fecDecoder;
+
+fecDecoder *NewFecDecoder (void *userData, 
+  void (*userReceive)(void *userData, __int64_t position, fecPayload *buf, int len)
+);
+
+size_t FecDecode (void *buf, size_t size, size_t count,
+  fecDecoder *f);
+
+void FlushFecDecoder (fecDecoder *f);
+</pre>
+The error correction works best if the decoder has the largest possible
+amount of data. So you should call the flush command to signify that no more
+data is expected e.g. after a timeout.
+<pre>
+void DeleteFecDecoder (fecDecoder *f);
+</pre>
+
+<h3>To Do list</h3>
+<ol>
+<li><b>Implement sub channels</b> Currently we send a very large header
+packet. Because we need it at the receiver, it must be sent with every
+packets. 
+<p>It consumes less bandwidth to implement a sub channel to send the 20 odd
+bytes of control information :
+Now the header is e.g. 2 bytes. The first bytes sends would be a simple
+modulo 2<sup>8</sup> counter. The second byte would contain 1 byte of
+control data if the first byte is less than 20, and would be a checksum byte
+otherwise. This checksum scheme can also use Galois Fields and Gaussian
+elimination, but it's parameters must chosen so that it will still function
+under the worst possible error rates.
+<li><b>Optimizations</b> 
+<li><b>Packet checksum</b> Let the library send its own checksums incase the
+UDP checksum still lets some bad packets get through.
+<li><b>Non field rings</b> It is quite possible that there exists some
+polynomials that are not primative, and the resultant ring is not a field, but
+most of the ring is invertible, and they can be manipulated for even faster
+operation. This needs to be investigated.
+<li><b>Overflow of i</b> If more than 2 billion packets are send, problem may
+occur. We need to fi this.
+</ol>
+
+<h3>Copyright</h3>
+<pre>
+Copyright (c) 2002 Nic Roets.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the
+   distribution.
+
+3. All advertising materials mentioning features or use of this
+   software must display the following acknowledgment:
+   "This product includes software developed by Nic Roets"
+
+4. Redistributions of any form whatsoever must retain the following
+   acknowledgment:
+   "This product includes software developed by Nic Roets"
+
+THIS SOFTWARE IS PROVIDED BY NIC ROETS `AS IS'' AND ANY
+EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL NIC ROETS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGE.
+</pre>
